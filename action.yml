@@ -1,0 +1,95 @@
+name: 'PQS Check'
+description: 'Score and gate AI prompts before they hit production.'
+author: 'Ken Burbary'
+
+branding:
+  icon: shield
+  color: green
+
+inputs:
+  api-key:
+    description: 'PQS API key (starts with pqs_live_). Store as a repo secret.'
+    required: true
+  dir:
+    description: 'Directory to recursively scan for .md / .txt / .prompt files.'
+    required: false
+    default: 'prompts'
+  file:
+    description: 'Single file to score. Takes precedence over `dir` when both are supplied.'
+    required: false
+    default: ''
+  threshold:
+    description: 'Minimum total score out of 80. The action fails if any prompt scores below this.'
+    required: false
+    default: '60'
+  format:
+    description: 'Output format: text | json | markdown.'
+    required: false
+    default: 'markdown'
+  cli-version:
+    description: 'Pin a specific pqs-quality version (e.g. 0.1.0). Defaults to latest.'
+    required: false
+    default: 'latest'
+
+outputs:
+  exit-code:
+    description: 'Exit code from pqs check (0=pass, 1=threshold fail, 2=api/network, 3=auth).'
+    value: ${{ steps.check.outputs.exit-code }}
+
+runs:
+  using: 'composite'
+  steps:
+    # --- Validate inputs before doing any expensive work. Fails fast on
+    # misconfiguration so users don't wait 30s for a setup-node step to finish
+    # just to discover they forgot a secret. Inputs are passed via env to
+    # avoid shell injection (never interpolate ${{ inputs.* }} into a run: string).
+    - name: Validate inputs
+      shell: bash
+      env:
+        INPUT_API_KEY: ${{ inputs.api-key }}
+        INPUT_FILE: ${{ inputs.file }}
+        INPUT_DIR: ${{ inputs.dir }}
+      run: |
+        if [[ "${INPUT_API_KEY}" != pqs_live_* ]]; then
+          echo "::error::api-key must start with pqs_live_ — check the PQS_API_KEY secret."
+          exit 3
+        fi
+        if [[ -z "${INPUT_FILE}" && -z "${INPUT_DIR}" ]]; then
+          echo "::error::either 'file' or 'dir' must be provided (both were empty)."
+          exit 1
+        fi
+
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install pqs-quality
+      shell: bash
+      env:
+        CLI_VERSION: ${{ inputs.cli-version }}
+      run: |
+        npm install -g "pqs-quality@${CLI_VERSION}"
+
+    # --- Run the check. We deliberately disable errexit so the exit-code
+    # output is always written, even on a non-zero pqs exit. Then we propagate
+    # the real exit code so the calling job reflects pass/fail correctly.
+    - name: Run pqs check
+      id: check
+      shell: bash
+      env:
+        PQS_API_KEY: ${{ inputs.api-key }}
+        INPUT_FILE: ${{ inputs.file }}
+        INPUT_DIR: ${{ inputs.dir }}
+        INPUT_THRESHOLD: ${{ inputs.threshold }}
+        INPUT_FORMAT: ${{ inputs.format }}
+      run: |
+        set +e
+        if [[ -n "${INPUT_FILE}" ]]; then
+          pqs check --file "${INPUT_FILE}" --threshold "${INPUT_THRESHOLD}" --format "${INPUT_FORMAT}"
+        else
+          pqs check --dir "${INPUT_DIR}" --threshold "${INPUT_THRESHOLD}" --format "${INPUT_FORMAT}"
+        fi
+        code=$?
+        echo "exit-code=${code}" >> "${GITHUB_OUTPUT}"
+        exit "${code}"

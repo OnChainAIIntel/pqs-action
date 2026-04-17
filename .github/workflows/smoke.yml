@@ -1,0 +1,52 @@
+name: smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Two jobs, no needs: dependency between them, so both always run and one
+# failing won't cancel the other. That way a real regression in the CLI
+# (positive OR negative) surfaces on every push.
+jobs:
+  positive-test:
+    name: good.md passes threshold 50
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No assertion step — if good.md regresses below 50, the Action itself
+      # exits 1 and the job fails. That's exactly what we want.
+      - uses: ./
+        with:
+          api-key: ${{ secrets.PQS_API_KEY }}
+          file: test/fixtures/good.md
+          threshold: '50'
+
+  negative-test:
+    name: bad.md fails threshold 60
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: check
+        uses: ./
+        continue-on-error: true
+        with:
+          api-key: ${{ secrets.PQS_API_KEY }}
+          file: test/fixtures/bad.md
+          threshold: '60'
+
+      # Assert the EXACT exit code, not just "non-zero". A threshold failure
+      # is exit 1; auth failure is exit 3; api failure is exit 2. Checking
+      # for == "1" ensures an auth bug can't masquerade as a threshold fail
+      # and silently pass this smoke test.
+      - name: Assert bad.md failed the gate
+        shell: bash
+        run: |
+          echo "exit-code was: ${{ steps.check.outputs.exit-code }}"
+          if [ "${{ steps.check.outputs.exit-code }}" != "1" ]; then
+            echo "ERROR: negative-test expected exit-code=1 but got ${{ steps.check.outputs.exit-code }}"
+            exit 1
+          fi
