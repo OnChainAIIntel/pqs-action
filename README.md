@@ -1,5 +1,7 @@
 # pqs-action
 
+[![GitHub Marketplace](https://img.shields.io/badge/GitHub_Marketplace-PQS_Check-2ea44f?logo=github)](https://github.com/marketplace/actions/pqs-check)
+
 Score and gate AI prompts in GitHub Actions. Fail pull requests when a prompt drops below your quality threshold.
 
 ## Add this to your workflow
